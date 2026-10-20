@@ -2,7 +2,11 @@
 
 A fast, solid-compression archiver in C++17 with LZMA2, deduplication, multithreading, and ZIP export.
 
-**zzipp** is a Swahili-inspired name associated with *load* or *cargo*. It packs files and folders into a single `.mzg` archive, similar to 7-Zip and RAR: multiple files are compressed together in solid blocks, allowing repeated content across files to be compressed efficiently. It can also export archives to standard `.zip` files.
+# zzipp
+
+A fast C++17 archiver featuring solid LZMA2 compression, deduplication, multithreading, and ZIP export.
+
+**zzipp** packs files and folders into a single `.mzg` archive. It compresses multiple files in solid blocks to reduce redundant data and improve compression efficiency. It also supports exporting archives to standard `.zip` files.
 
 ```bash
 zzipp create project.mzg my-project/ --max -j 4
