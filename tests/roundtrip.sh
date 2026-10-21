@@ -2,6 +2,8 @@
 # End-to-end tests: create/list/test/extract round trip, dedup, overwrite protection,
 # ZIP export, and corruption handling. Usage: roundtrip.sh /path/to/zzipp
 set -euo pipefail
+# Make sanitizer reports distinguishable from ordinary errors (exit 1).
+export ASAN_OPTIONS=exitcode=99:detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1:exitcode=98
 
 MZ="$(cd "$(dirname "${1:?usage: roundtrip.sh /path/to/zzipp}")" && pwd)/$(basename "$1")"
 WORK="$(mktemp -d)"

@@ -1,6 +1,9 @@
 // `zzipp extract`, `list` and `test`.
 #include <algorithm>
+#include <atomic>
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -57,10 +60,11 @@ bool write_file(const fs::path& dest, const uint8_t* data, size_t n, const Entry
             errs.add("refusing to overwrite symlink/directory: " + e.path);
             return false;
         }
+        fs::remove(dest, ec);  // a read-only file cannot be truncated in place
     }
     std::ofstream out(dest, std::ios::binary | std::ios::trunc);
     if (!out) {
-        errs.add("cannot create " + dest.string());
+        errs.add("cannot create " + dest.string() + " (" + std::strerror(errno) + ")");
         return false;
     }
     if (n) out.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(n));
@@ -79,6 +83,8 @@ std::map<uint32_t, std::vector<const Entry*>> group_by_block(const std::vector<c
         if (e->block != NO_BLOCK) groups[e->block].push_back(e);
     return groups;
 }
+
+fs::path under(const fs::path& root, const std::string& rel) { return root / fs::u8path(rel); }
 
 void check_crc(const Entry& e, const std::vector<uint8_t>& raw) {
     if (crc32(raw.data() + e.offset, static_cast<size_t>(e.size)) != e.crc)
@@ -120,7 +126,7 @@ int cmd_list(const std::string& archive, bool long_format) {
     return 0;
 }
 
-int cmd_test(const std::string& archive, unsigned threads) {
+int cmd_test(const std::string& archive, unsigned threads, const Callbacks& cb) {
     ArchiveReader ar(archive);
     const Index& idx = ar.index();
     std::vector<const Entry*> files;
@@ -128,13 +134,16 @@ int cmd_test(const std::string& archive, unsigned threads) {
         if (e.kind == EntryKind::File) files.push_back(&e);
     auto groups = group_by_block(files);
 
+    std::atomic<uint64_t> blocks_done{0};
     parallel_for(idx.blocks.size(), threads, [&](size_t b) {
+        cb.check();
         std::vector<uint8_t> raw = ar.read_block(static_cast<uint32_t>(b));  // verifies block CRC
         auto it = groups.find(static_cast<uint32_t>(b));
         if (it != groups.end())
             for (const Entry* e : it->second) check_crc(*e, raw);
+        cb.report(++blocks_done, idx.blocks.size());
     });
-    std::printf("OK: %zu blocks, %zu files verified\n", idx.blocks.size(), files.size());
+    cb.say(format_string("OK: %zu blocks, %zu files verified", idx.blocks.size(), files.size()));
     return 0;
 }
 
@@ -161,46 +170,50 @@ int cmd_extract(const ExtractOptions& o) {
     for (size_t i = 0; i < selectors.size(); ++i)
         if (!used[i]) throw std::runtime_error("not found in archive: " + selectors[i]);
 
-    const fs::path root = o.out_dir;
+    const fs::path root = fs::u8path(o.out_dir);
     std::error_code ec;
     fs::create_directories(root, ec);
     if (ec) throw std::runtime_error("cannot create output directory: " + ec.message());
 
     ErrorSink errs;
-    for (const Entry* d : dirs) fs::create_directories(root / d->path, ec);
-    for (const Entry* f : files) fs::create_directories((root / f->path).parent_path(), ec);
+    for (const Entry* d : dirs) fs::create_directories(under(root, d->path), ec);
+    for (const Entry* f : files) fs::create_directories((under(root, f->path)).parent_path(), ec);
 
-    uint64_t bytes = 0;
+    uint64_t bytes = 0, total_bytes = 0;
     size_t written = 0;
+    for (const Entry* f : files) total_bytes += f->size;
+    o.cb.report(0, total_bytes);
     std::mutex stat_mu;
 
     // Empty files have no data block.
     for (const Entry* f : files) {
         if (f->block != NO_BLOCK) continue;
-        if (write_file(root / f->path, nullptr, 0, *f, o.force, errs)) ++written;
+        if (write_file(under(root, f->path), nullptr, 0, *f, o.force, errs)) ++written;
     }
 
     auto groups = group_by_block(files);
     std::vector<std::pair<uint32_t, std::vector<const Entry*>>> work(groups.begin(), groups.end());
     parallel_for(work.size(), o.threads, [&](size_t w) {
+        o.cb.check();
         std::vector<uint8_t> raw = ar.read_block(work[w].first);
         for (const Entry* e : work[w].second) {
             check_crc(*e, raw);
-            if (write_file(root / e->path, raw.data() + e->offset, static_cast<size_t>(e->size), *e, o.force, errs)) {
+            if (write_file(under(root, e->path), raw.data() + e->offset, static_cast<size_t>(e->size), *e, o.force, errs)) {
                 std::lock_guard<std::mutex> lk(stat_mu);
                 ++written;
                 bytes += e->size;
+                o.cb.report(bytes, total_bytes);
             }
             if (o.verbose) std::fprintf(stderr, "  %s\n", e->path.c_str());
         }
     });
 
     // Directory metadata last: writing files inside a directory changes its mtime.
-    for (auto it = dirs.rbegin(); it != dirs.rend(); ++it) apply_metadata(root / (*it)->path, **it);
+    for (auto it = dirs.rbegin(); it != dirs.rend(); ++it) apply_metadata(under(root, (*it)->path), **it);
 
-    for (const auto& m : errs.messages) std::fprintf(stderr, "zzipp: %s\n", m.c_str());
-    std::printf("extracted %zu file%s (%s) to %s in %.2fs\n", written, written == 1 ? "" : "s",
-                human_size(bytes).c_str(), o.out_dir.c_str(), timer.seconds());
+    for (const auto& m : errs.messages) o.cb.warn(m);
+    o.cb.say(format_string("extracted %zu file%s (%s) to %s in %.2fs", written, written == 1 ? "" : "s",
+                           human_size(bytes).c_str(), o.out_dir.c_str(), timer.seconds()));
     return errs.messages.empty() ? 0 : 1;
 }
 

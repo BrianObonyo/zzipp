@@ -165,10 +165,11 @@ int cmd_export_zip(const ZipOptions& o) {
     Timer timer;
     ArchiveReader ar(o.archive);
     const Index& idx = ar.index();
-    if (fs::exists(o.zip_path) && !o.force)
+    const fs::path zip_out = fs::u8path(o.zip_path);
+    if (fs::exists(zip_out) && !o.force)
         throw std::runtime_error("output exists (use -f to overwrite): " + o.zip_path);
 
-    fs::path tmp = o.zip_path;
+    fs::path tmp = zip_out;
     tmp += ".partial";
     try {
         ZipWriter zip(tmp);
@@ -179,24 +180,30 @@ int cmd_export_zip(const ZipOptions& o) {
             else
                 by_block[e.block].push_back(&e);
         }
+        uint64_t done = 0, total = 0;
+        for (const auto& kv : by_block) total += idx.blocks[kv.first].raw_size;
+        o.cb.report(0, total);
         for (const auto& [b, entries] : by_block) {
+            o.cb.check();
             std::vector<uint8_t> raw = ar.read_block(b);
             for (const Entry* e : entries) {
                 if (crc32(raw.data() + e->offset, static_cast<size_t>(e->size)) != e->crc)
                     throw FormatError("checksum mismatch in file: " + e->path);
                 zip.add(*e, raw.data() + e->offset, o.level);
             }
+            done += raw.size();
+            o.cb.report(done, total);
         }
         zip.finish();
-        std::printf("%s: %zu entries in %.2fs\n", o.zip_path.c_str(), zip.count(), timer.seconds());
+        o.cb.say(format_string("%s: %zu entries in %.2fs", o.zip_path.c_str(), zip.count(), timer.seconds()));
     } catch (...) {
         std::error_code ec;
         fs::remove(tmp, ec);
         throw;
     }
     std::error_code ec;
-    if (o.force) fs::remove(o.zip_path, ec);
-    fs::rename(tmp, o.zip_path, ec);
+    if (o.force) fs::remove(zip_out, ec);
+    fs::rename(tmp, zip_out, ec);
     if (ec) throw std::runtime_error("cannot move ZIP into place: " + ec.message());
     return 0;
 }

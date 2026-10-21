@@ -22,6 +22,7 @@ inline uint64_t crc64(const uint8_t* d, size_t n, uint64_t prev = 0) { return lz
 uint64_t parse_size(const std::string& text);  // "64m", "512k", "1g", "4096"
 std::string human_size(uint64_t bytes);        // "12.3 MiB"
 std::string group_digits(uint64_t n);          // 1234567 -> "1,234,567"
+std::string format_string(const char* fmt, ...);  // printf into a std::string
 unsigned default_threads();
 
 int64_t to_unix_time(std::filesystem::file_time_type t);

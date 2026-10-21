@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <cstdio>
@@ -66,8 +67,9 @@ struct BlockResult {
     bool ready = false;
 };
 
-void scan_input(const std::string& input, const fs::path& skip_a, const fs::path& skip_b, Scan& out) {
-    fs::path p = fs::absolute(input).lexically_normal();
+void scan_input(const std::string& input, const fs::path& skip_a, const fs::path& skip_b, Scan& out,
+                const Callbacks& cb) {
+    fs::path p = fs::absolute(fs::u8path(input)).lexically_normal();
     if (!p.has_filename()) p = p.parent_path();  // "dir/" -> "dir"
     std::error_code ec;
     auto st = fs::symlink_status(p, ec);
@@ -77,10 +79,10 @@ void scan_input(const std::string& input, const fs::path& skip_a, const fs::path
     auto handle = [&](const fs::path& q, const fs::file_status& qs) {
         if (q == skip_a || q == skip_b) return;  // never archive the archive itself
         if (fs::is_symlink(qs)) {
-            std::cerr << "zzipp: warning: skipping symlink " << q.string() << "\n";
+            cb.warn("skipping symlink " + q.string());
             return;
         }
-        const std::string rel = q.lexically_relative(base).generic_string();
+        const std::string rel = q.lexically_relative(base).generic_u8string();
         if (rel.empty() || !is_safe_relative_path(rel))
             throw std::runtime_error("unsupported path (cannot archive): " + q.string());
         std::error_code e;
@@ -101,7 +103,7 @@ void scan_input(const std::string& input, const fs::path& skip_a, const fs::path
             f.cls = f.size ? classify_file(q) : FileClass::Normal;
             out.files.push_back(std::move(f));
         } else {
-            std::cerr << "zzipp: warning: skipping special file " << q.string() << "\n";
+            cb.warn("skipping special file " + q.string());
         }
     };
 
@@ -146,7 +148,7 @@ bool files_equal(const fs::path& a, const fs::path& b) {
 
 // Files with a unique size cannot have duplicates, so only same-size files are hashed.
 // A hash match is always confirmed with a byte-for-byte comparison.
-size_t find_duplicates(std::vector<FileItem>& files) {
+size_t find_duplicates(std::vector<FileItem>& files, const Callbacks& cb) {
     std::unordered_map<uint64_t, std::vector<size_t>> by_size;
     for (size_t i = 0; i < files.size(); ++i)
         if (files[i].size > 0) by_size[files[i].size].push_back(i);
@@ -156,6 +158,7 @@ size_t find_duplicates(std::vector<FileItem>& files) {
         if (ids.size() < 2) continue;
         std::unordered_map<uint64_t, std::vector<size_t>> canon;
         for (size_t i : ids) {
+            cb.check();
             auto& list = canon[hash_file(files[i].abs)];
             bool dup = false;
             for (size_t c : list) {
@@ -256,14 +259,18 @@ struct PoolGuard {
 
 int cmd_create(const CreateOptions& o) {
     Timer timer;
-    const fs::path out_path = fs::absolute(o.archive).lexically_normal();
+    o.cb.report(0, 0);  // scanning: progress unknown
+    const fs::path out_path = fs::absolute(fs::u8path(o.archive)).lexically_normal();
     fs::path tmp_path = out_path;
     tmp_path += ".partial";
     if (fs::exists(out_path) && !o.force)
         throw std::runtime_error("archive already exists (use -f to overwrite): " + o.archive);
 
     Scan scan;
-    for (const auto& in : o.inputs) scan_input(in, out_path, tmp_path, scan);
+    for (const auto& in : o.inputs) {
+        o.cb.check();
+        scan_input(in, out_path, tmp_path, scan, o.cb);
+    }
 
     std::sort(scan.files.begin(), scan.files.end(),
               [](const FileItem& a, const FileItem& b) { return a.rel < b.rel; });
@@ -278,7 +285,7 @@ int cmd_create(const CreateOptions& o) {
     }
     if (scan.files.empty() && scan.dirs.empty()) throw std::runtime_error("nothing to archive");
 
-    const size_t dups = o.dedup ? find_duplicates(scan.files) : 0;
+    const size_t dups = o.dedup ? find_duplicates(scan.files, o.cb) : 0;
     const std::vector<BlockPlan> plans = plan_blocks(scan.files, o);
 
     uint64_t total_in = 0;
@@ -314,12 +321,15 @@ int cmd_create(const CreateOptions& o) {
     };
 
     std::ofstream out(tmp_path, std::ios::binary | std::ios::trunc);
-    if (!out) throw std::runtime_error("cannot write " + tmp_path.string());
+    if (!out) throw std::runtime_error("cannot create output file " + out_path.string() +
+                                 " (does the folder exist, and can you write to it?)");
     const std::array<uint8_t, HEADER_SIZE> zero_header{};
     out.write(reinterpret_cast<const char*>(zero_header.data()), HEADER_SIZE);
 
     Index idx;
     uint64_t pos = HEADER_SIZE;
+    uint64_t done_raw = 0, total_raw = 0;
+    for (const auto& p : plans) total_raw += p.raw;
     try {
         PoolGuard guard{{}, abort};
         const unsigned nthreads =
@@ -330,7 +340,10 @@ int cmd_create(const CreateOptions& o) {
             BlockResult r;
             {
                 std::unique_lock<std::mutex> lk(mu);
-                cv.wait(lk, [&] { return results[i].ready || error; });
+                while (!(results[i].ready || error)) {
+                    cv.wait_for(lk, std::chrono::milliseconds(100));
+                    if (o.cb.cancelled()) throw Cancelled();
+                }
                 if (error) std::rethrow_exception(error);
                 r = std::move(results[i]);
             }
@@ -345,6 +358,8 @@ int cmd_create(const CreateOptions& o) {
                              names[static_cast<int>(r.info.method)]);
             }
             idx.blocks.push_back(r.info);
+            done_raw += r.info.raw_size;
+            o.cb.report(done_raw, total_raw);
         }
     } catch (...) {
         out.close();
@@ -407,14 +422,16 @@ int cmd_create(const CreateOptions& o) {
     size_t n_method[3] = {0, 0, 0};
     for (const auto& b : idx.blocks) ++n_method[static_cast<int>(b.method)];
     const double secs = timer.seconds();
-    std::printf("%s: %s files, %s dirs", o.archive.c_str(), group_digits(scan.files.size()).c_str(),
-                group_digits(scan.dirs.size()).c_str());
-    if (dups) std::printf(" (%zu duplicate%s stored once)", dups, dups == 1 ? "" : "s");
-    std::printf("\n  input : %s\n  output: %s (%.1f%% of input)\n", human_size(total_in).c_str(),
-                human_size(pos).c_str(), total_in ? 100.0 * static_cast<double>(pos) / static_cast<double>(total_in) : 100.0);
-    std::printf("  blocks: %zu lzma2, %zu bcj+lzma2, %zu stored\n", n_method[1], n_method[2], n_method[0]);
-    std::printf("  time  : %.2fs (%.1f MiB/s)\n", secs,
-                secs > 0 ? static_cast<double>(total_in) / static_cast<double>(MiB) / secs : 0.0);
+    std::string head = format_string("%s: %s files, %s dirs", o.archive.c_str(),
+                                     group_digits(scan.files.size()).c_str(), group_digits(scan.dirs.size()).c_str());
+    if (dups) head += format_string(" (%zu duplicate%s stored once)", dups, dups == 1 ? "" : "s");
+    o.cb.say(head);
+    o.cb.say(format_string("  input : %s", human_size(total_in).c_str()));
+    o.cb.say(format_string("  output: %s (%.1f%% of input)", human_size(pos).c_str(),
+                           total_in ? 100.0 * static_cast<double>(pos) / static_cast<double>(total_in) : 100.0));
+    o.cb.say(format_string("  blocks: %zu lzma2, %zu bcj+lzma2, %zu stored", n_method[1], n_method[2], n_method[0]));
+    o.cb.say(format_string("  time  : %.2fs (%.1f MiB/s)", secs,
+                           secs > 0 ? static_cast<double>(total_in) / static_cast<double>(MiB) / secs : 0.0));
     return 0;
 }
 

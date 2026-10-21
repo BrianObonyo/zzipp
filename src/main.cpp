@@ -10,8 +10,8 @@
 #include "commands.hpp"
 #include "util.hpp"
 
-#ifndef zzipp_VERSION
-#define zzipp_VERSION "dev"
+#ifndef ZZIPP_VERSION
+#define ZZIPP_VERSION "dev"
 #endif
 
 using namespace zzipp;
@@ -24,7 +24,7 @@ struct UsageError : std::runtime_error {
 
 void print_usage(FILE* f) {
     std::fputs(
-        "zzipp " zzipp_VERSION " - solid-compression archiver (LZMA2) with ZIP export\n"
+        "zzipp " ZZIPP_VERSION " - solid-compression archiver (LZMA2) with ZIP export\n"
         "\n"
         "Usage:\n"
         "  zzipp create  [options] <archive.mzg> <file|dir>...\n"
@@ -68,7 +68,7 @@ int run(const std::vector<std::string>& a) {
         return 0;
     }
     if (cmd == "version" || cmd == "--version") {
-        std::printf("zzipp %s (liblzma %s)\n", zzipp_VERSION, lzma_version_string());
+        std::printf("zzipp %s (liblzma %s)\n", ZZIPP_VERSION, lzma_version_string());
         return 0;
     }
 

@@ -1,6 +1,8 @@
 #include "util.hpp"
 
 #include <cctype>
+#include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <stdexcept>
 
@@ -53,33 +55,50 @@ std::string group_digits(uint64_t n) {
     return std::string(out.rbegin(), out.rend());
 }
 
+std::string format_string(const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    va_list ap2;
+    va_copy(ap2, ap);
+    int n = std::vsnprintf(nullptr, 0, fmt, ap);
+    va_end(ap);
+    std::string s(n > 0 ? static_cast<size_t>(n) : 0, '\0');
+    if (n > 0) std::vsnprintf(&s[0], s.size() + 1, fmt, ap2);
+    va_end(ap2);
+    return s;
+}
+
 unsigned default_threads() {
     unsigned n = std::thread::hardware_concurrency();
     return std::max(1u, std::min(8u, n));
 }
 
-// std::filesystem's clock epoch is implementation-defined before C++20, so we measure
-// the offset to the system clock once and apply it consistently in both directions.
+// std::filesystem's clock epoch is implementation-defined (Unix epoch on recent libstdc++, 1601 on
+// Windows). The epochs differ by a whole number of seconds, so we measure that offset once, in
+// seconds, and apply it in both directions. Doing the arithmetic in seconds (not nanoseconds)
+// avoids integer overflow for far-away epochs.
 namespace {
-const std::chrono::nanoseconds g_clock_delta = [] {
+const int64_t g_clock_delta_sec = [] {
     auto f = fs::file_time_type::clock::now();
     auto s = std::chrono::system_clock::now();
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(s.time_since_epoch()) -
-           std::chrono::duration_cast<std::chrono::nanoseconds>(f.time_since_epoch());
+    const double d = std::chrono::duration<double>(s.time_since_epoch()).count() -
+                     std::chrono::duration<double>(f.time_since_epoch()).count();
+    return static_cast<int64_t>(std::llround(d));  // sub-second part is only measurement noise
 }();
-}
+// Range of Unix times this platform's file clock can represent (with a small safety margin).
+const int64_t g_min_unix = std::chrono::duration_cast<std::chrono::seconds>(fs::file_time_type::min().time_since_epoch()).count() + g_clock_delta_sec + 2;
+const int64_t g_max_unix = std::chrono::duration_cast<std::chrono::seconds>(fs::file_time_type::max().time_since_epoch()).count() + g_clock_delta_sec - 2;
+}  // namespace
 
 int64_t to_unix_time(fs::file_time_type t) {
-    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()) + g_clock_delta;
-    int64_t n = ns.count();
-    int64_t s = n / 1'000'000'000;
-    if (n % 1'000'000'000 < 0) --s;
-    return s;
+    return std::chrono::floor<std::chrono::seconds>(t.time_since_epoch()).count() + g_clock_delta_sec;
 }
 
 fs::file_time_type from_unix_time(int64_t seconds) {
-    auto d = std::chrono::seconds(seconds) - g_clock_delta;
-    return fs::file_time_type(std::chrono::duration_cast<fs::file_time_type::duration>(d));
+    // An archive can contain any 64-bit value; clamp instead of overflowing.
+    seconds = std::max(g_min_unix, std::min(g_max_unix, seconds));
+    return fs::file_time_type(std::chrono::duration_cast<fs::file_time_type::duration>(
+        std::chrono::seconds(seconds - g_clock_delta_sec)));
 }
 
 }  // namespace zzipp

@@ -27,7 +27,12 @@ void make_chain(lzma_filter* f, lzma_options_lzma& opts, bool bcj) {
 
 bool lzma2_encode(const uint8_t* in, size_t n, bool bcj_x86, uint32_t preset, uint32_t dict_request,
                   std::vector<uint8_t>& out, uint32_t& dict_used) {
-    if (n == 0) return false;
+    // Blocks this small cannot get smaller (LZMA2 framing alone costs a few bytes), and liblzma
+    // rejects an empty output buffer, so store them.
+    if (n < 16) {
+        out.clear();
+        return false;
+    }
     lzma_options_lzma opts;
     if (lzma_lzma_preset(&opts, preset)) throw std::runtime_error("invalid compression preset");
     uint64_t dict = dict_request ? dict_request : opts.dict_size;

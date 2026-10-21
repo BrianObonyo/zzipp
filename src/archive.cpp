@@ -1,6 +1,7 @@
 #include "archive.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <lzma.h>
 #include <stdexcept>
@@ -51,7 +52,7 @@ Index decode_index_region(const uint8_t* data, size_t size) {
 }
 
 ArchiveReader::ArchiveReader(const std::string& path) : path_(path) {
-    std::ifstream in(path, std::ios::binary | std::ios::ate);
+    std::ifstream in(std::filesystem::u8path(path), std::ios::binary | std::ios::ate);
     if (!in) throw std::runtime_error("cannot open archive: " + path);
     file_size_ = static_cast<uint64_t>(in.tellg());
     if (file_size_ < HEADER_SIZE) throw FormatError("file too small to be an archive");
@@ -85,7 +86,7 @@ std::vector<uint8_t> ArchiveReader::read_block(uint32_t b) const {
     if (b >= index_.blocks.size()) throw FormatError("block index out of range");
     const BlockInfo& bi = index_.blocks[b];
 
-    std::ifstream in(path_, std::ios::binary);
+    std::ifstream in(std::filesystem::u8path(path_), std::ios::binary);
     if (!in) throw std::runtime_error("cannot open archive: " + path_);
     std::vector<uint8_t> comp(bi.comp_size);
     in.seekg(static_cast<std::streamoff>(bi.offset));
