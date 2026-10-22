@@ -1,6 +1,6 @@
 # zzipp
 
-A fast, solid-compression archiver in C++17 with LZMA2, deduplication, multithreading, and ZIP export.
+A fast, solid-compression archiverr in C++17 with LZMA2, deduplication, multithreading, and ZIP export.
 
 # zzipp
 
