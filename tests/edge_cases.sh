@@ -5,6 +5,10 @@ set -uo pipefail
 ZZ="$(cd "$(dirname "${1:?usage: edge_cases.sh /path/to/zzipp}")" && pwd)/$(basename "$1")"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT; cd "$WORK"
 export ASAN_OPTIONS=exitcode=99:detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1:exitcode=98
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=1 ;;
+  *) IS_WINDOWS=0 ;;
+esac
 FAILS=0
 fail() { echo "FAIL: $*" >&2; FAILS=$((FAILS + 1)); }
 
@@ -40,7 +44,9 @@ mkdir adir
 expect 1 "" -- "$ZZ" list adir
 echo hi > f.txt
 expect 1 "cannot create output" -- "$ZZ" create /no/such/dir/a.mzg f.txt
-expect 1 "unsupported path" -- "$ZZ" create root.mzg /
+if [ "$IS_WINDOWS" -eq 0 ]; then
+  expect 1 "unsupported path" -- "$ZZ" create root.mzg /
+fi
 expect 1 "duplicate path" -- "$ZZ" create dup.mzg f.txt f.txt
 expect 1 "nothing to archive" -- "$ZZ" create none.mzg /dev/null
 
@@ -64,9 +70,12 @@ printf 'x' > "odd/new
 line.txt"
 printf 'x' > "odd/$(printf 'a%.0s' $(seq 1 200)).txt"
 printf 'x' > "odd/ünï çödé 日本語.txt"
-ln -s f.txt odd/link
+SYMLINK_CREATED=0
+if ln -s f.txt odd/link 2>/dev/null; then SYMLINK_CREATED=1; fi
 out=$("$ZZ" create odd.mzg ./odd/ 2>&1); [ $? -eq 0 ] || fail "odd names: $out"
-grep -qi "symlink" <<<"$out" || fail "symlink skip was not reported: $out"
+if [ "$SYMLINK_CREATED" -eq 1 ]; then
+  grep -qi "symlink" <<<"$out" || fail "symlink skip was not reported: $out"
+fi
 expect 0 "" -- "$ZZ" extract -o odd_out odd.mzg
 diff <(cd odd && find . -type f | LC_ALL=C sort) <(cd odd_out/odd && find . -type f | LC_ALL=C sort) >/dev/null || fail "odd file names did not round-trip"
 mkdir -p rel/sub && echo r > rel/sub/r.txt
@@ -106,7 +115,9 @@ if stat -c %Y f.txt >/dev/null 2>&1; then
   touch -d '2020-02-03 04:05:06' f.txt; chmod 640 f.txt
   "$ZZ" create meta.mzg f.txt >/dev/null; "$ZZ" extract -o meta_out meta.mzg >/dev/null
   [ "$(stat -c %Y f.txt)" = "$(stat -c %Y meta_out/f.txt)" ] || fail "mtime not preserved"
-  [ "$(stat -c %a meta_out/f.txt)" = "640" ] || fail "permissions not preserved"
+  if [ "$IS_WINDOWS" -eq 0 ]; then
+    [ "$(stat -c %a meta_out/f.txt)" = "640" ] || fail "permissions not preserved"
+  fi
 fi
 
 # ---------- hostile archive: out-of-range mtime must not crash extraction ----------

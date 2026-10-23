@@ -13,6 +13,11 @@
 #include <set>
 #include <stdexcept>
 
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include "archive.hpp"
 #include "commands.hpp"
 #include "util.hpp"
@@ -60,7 +65,18 @@ bool write_file(const fs::path& dest, const uint8_t* data, size_t n, const Entry
             errs.add("refusing to overwrite symlink/directory: " + e.path);
             return false;
         }
-        fs::remove(dest, ec);  // a read-only file cannot be truncated in place
+#ifdef _WIN32
+        const DWORD attributes = GetFileAttributesW(dest.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_READONLY) &&
+            !SetFileAttributesW(dest.c_str(), attributes & ~FILE_ATTRIBUTE_READONLY)) {
+            errs.add("cannot make existing file writable: " + dest.string());
+            return false;
+        }
+#endif
+        if (!fs::remove(dest, ec) || ec) {
+            errs.add("cannot remove existing file " + dest.string() + " (" + ec.message() + ")");
+            return false;
+        }
     }
     std::ofstream out(dest, std::ios::binary | std::ios::trunc);
     if (!out) {
