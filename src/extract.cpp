@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <set>
@@ -52,8 +53,53 @@ void apply_metadata(const fs::path& p, const Entry& e) {
     fs::last_write_time(p, from_unix_time(e.mtime), ec);  // best effort
 }
 
+bool ensure_safe_directories(const fs::path& root, const std::string& rel, bool include_leaf,
+                             const Entry& e, ErrorSink& errs) {
+    fs::path current = root;
+    fs::path relative = fs::u8path(rel);
+    const size_t component_count = static_cast<size_t>(std::distance(relative.begin(), relative.end()));
+    size_t component_index = 0;
+    std::error_code ec;
+    for (const auto& component : relative) {
+        ++component_index;
+        if (!include_leaf && component_index == component_count) break;
+        current /= component;
+        ec.clear();
+        const fs::file_status status = fs::symlink_status(current, ec);
+        if (ec && ec != std::errc::no_such_file_or_directory) {
+            errs.add("cannot inspect output path " + current.string() + " (" + ec.message() + ")");
+            return false;
+        }
+        if (fs::is_symlink(status)) {
+            errs.add("refusing to follow symlink in output path: " + e.path);
+            return false;
+        }
+        if (fs::exists(status)) {
+            if (!fs::is_directory(status)) {
+                errs.add("output path component is not a directory: " + current.string());
+                return false;
+            }
+            continue;
+        }
+        ec.clear();
+        if (!fs::create_directory(current, ec) && ec) {
+            errs.add("cannot create output directory " + current.string() + " (" + ec.message() + ")");
+            return false;
+        }
+        ec.clear();
+        const fs::file_status created_status = fs::symlink_status(current, ec);
+        if (ec || fs::is_symlink(created_status) || !fs::is_directory(created_status)) {
+            errs.add("unsafe output directory: " + current.string());
+            return false;
+        }
+    }
+    return true;
+}
+
 // Writes one file's bytes. Returns false (and records an error) if it could not be written.
-bool write_file(const fs::path& dest, const uint8_t* data, size_t n, const Entry& e, bool force, ErrorSink& errs) {
+bool write_file(const fs::path& root, const fs::path& dest, const uint8_t* data, size_t n, const Entry& e,
+                bool force, ErrorSink& errs) {
+    if (!ensure_safe_directories(root, e.path, false, e, errs)) return false;
     std::error_code ec;
     auto st = fs::symlink_status(dest, ec);
     if (fs::exists(st)) {
@@ -192,8 +238,8 @@ int cmd_extract(const ExtractOptions& o) {
     if (ec) throw std::runtime_error("cannot create output directory: " + ec.message());
 
     ErrorSink errs;
-    for (const Entry* d : dirs) fs::create_directories(under(root, d->path), ec);
-    for (const Entry* f : files) fs::create_directories((under(root, f->path)).parent_path(), ec);
+    for (const Entry* d : dirs) ensure_safe_directories(root, d->path, true, *d, errs);
+    for (const Entry* f : files) ensure_safe_directories(root, f->path, false, *f, errs);
 
     uint64_t bytes = 0, total_bytes = 0;
     size_t written = 0;
@@ -204,7 +250,7 @@ int cmd_extract(const ExtractOptions& o) {
     // Empty files have no data block.
     for (const Entry* f : files) {
         if (f->block != NO_BLOCK) continue;
-        if (write_file(under(root, f->path), nullptr, 0, *f, o.force, errs)) ++written;
+        if (write_file(root, under(root, f->path), nullptr, 0, *f, o.force, errs)) ++written;
     }
 
     auto groups = group_by_block(files);
@@ -214,7 +260,8 @@ int cmd_extract(const ExtractOptions& o) {
         std::vector<uint8_t> raw = ar.read_block(work[w].first);
         for (const Entry* e : work[w].second) {
             check_crc(*e, raw);
-            if (write_file(under(root, e->path), raw.data() + e->offset, static_cast<size_t>(e->size), *e, o.force, errs)) {
+            if (write_file(root, under(root, e->path), raw.data() + e->offset, static_cast<size_t>(e->size), *e,
+                           o.force, errs)) {
                 std::lock_guard<std::mutex> lk(stat_mu);
                 ++written;
                 bytes += e->size;
@@ -225,7 +272,9 @@ int cmd_extract(const ExtractOptions& o) {
     });
 
     // Directory metadata last: writing files inside a directory changes its mtime.
-    for (auto it = dirs.rbegin(); it != dirs.rend(); ++it) apply_metadata(under(root, (*it)->path), **it);
+    for (auto it = dirs.rbegin(); it != dirs.rend(); ++it)
+        if (ensure_safe_directories(root, (*it)->path, true, **it, errs))
+            apply_metadata(under(root, (*it)->path), **it);
 
     for (const auto& m : errs.messages) o.cb.warn(m);
     o.cb.say(format_string("extracted %zu file%s (%s) to %s in %.2fs", written, written == 1 ? "" : "s",

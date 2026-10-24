@@ -7,7 +7,9 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <random>
 #include <stdexcept>
+#include <system_error>
 
 #include "archive.hpp"
 #include "commands.hpp"
@@ -169,8 +171,25 @@ int cmd_export_zip(const ZipOptions& o) {
     if (fs::exists(zip_out) && !o.force)
         throw std::runtime_error("output exists (use -f to overwrite): " + o.zip_path);
 
-    fs::path tmp = zip_out;
-    tmp += ".partial";
+    std::random_device random;
+    std::error_code ec;
+    fs::path temp_dir;
+    bool created_temp_dir = false;
+    for (unsigned attempt = 0; attempt < 100; ++attempt) {
+        const uint64_t nonce = (static_cast<uint64_t>(random()) << 32) | random();
+        temp_dir = zip_out;
+        temp_dir += ".tmp-" + std::to_string(nonce);
+        ec.clear();
+        if (fs::create_directory(temp_dir, ec)) {
+            created_temp_dir = true;
+            break;
+        }
+        if (ec && ec != std::errc::file_exists)
+            throw std::runtime_error("cannot create temporary ZIP directory: " + ec.message());
+    }
+    if (!created_temp_dir) throw std::runtime_error("cannot create unique temporary ZIP directory");
+    const fs::path tmp = temp_dir / "archive.zip";
+    size_t zip_entries = 0;
     try {
         ZipWriter zip(tmp);
         std::map<uint32_t, std::vector<const Entry*>> by_block;
@@ -195,16 +214,30 @@ int cmd_export_zip(const ZipOptions& o) {
             o.cb.report(done, total);
         }
         zip.finish();
-        o.cb.say(format_string("%s: %zu entries in %.2fs", o.zip_path.c_str(), zip.count(), timer.seconds()));
+        zip_entries = zip.count();
     } catch (...) {
         std::error_code ec;
-        fs::remove(tmp, ec);
+        fs::remove_all(temp_dir, ec);
         throw;
     }
-    std::error_code ec;
+    ec.clear();
     if (o.force) fs::remove(zip_out, ec);
+    if (ec) {
+        const std::string message = ec.message();
+        fs::remove_all(temp_dir, ec);
+        throw std::runtime_error("cannot remove existing ZIP: " + message);
+    }
+    ec.clear();
     fs::rename(tmp, zip_out, ec);
-    if (ec) throw std::runtime_error("cannot move ZIP into place: " + ec.message());
+    if (ec) {
+        const std::string message = ec.message();
+        fs::remove_all(temp_dir, ec);
+        throw std::runtime_error("cannot move ZIP into place: " + message);
+    }
+    ec.clear();
+    fs::remove(temp_dir, ec);
+    if (ec) throw std::runtime_error("ZIP created but cannot remove temporary directory: " + ec.message());
+    o.cb.say(format_string("%s: %zu entries in %.2fs", o.zip_path.c_str(), zip_entries, timer.seconds()));
     return 0;
 }
 

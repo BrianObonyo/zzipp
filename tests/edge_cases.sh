@@ -62,6 +62,11 @@ expect 0 "" -- "$ZZ" extract -o e_out e.mzg
 [ -f e_out/onlyempty/e1 ] && [ ! -s e_out/onlyempty/e2 ] || fail "empty files not restored"
 expect 0 "" -- "$ZZ" export-zip e.mzg e.zip
 unzip -tq e.zip >/dev/null 2>&1 || fail "ZIP of empty files rejected"
+echo "keep this file intact" > zip-target.txt
+if ln -s zip-target.txt protected.zip.partial 2>/dev/null; then
+  expect 0 "" -- "$ZZ" export-zip e.mzg protected.zip
+  [ "$(cat zip-target.txt)" = "keep this file intact" ] || fail "ZIP export followed a .partial symlink"
+fi
 
 # ---------- awkward names, relative paths, symlinks ----------
 mkdir -p odd
@@ -98,6 +103,15 @@ expect 1 "exists" -- "$ZZ" extract -o ro_out ro.mzg
 expect 0 "" -- "$ZZ" extract -f -o ro_out ro.mzg     # overwriting a read-only file must work
 [ "$(cat ro_out/ro/readonly.txt)" = "data" ] || fail "read-only file not overwritten correctly"
 chmod -R u+w ro_out 2>/dev/null
+
+# Extraction must not follow a pre-existing symlink inside the output tree.
+mkdir -p symlink_src/sub symlink_outside symlink_extract
+echo "archive contents" > symlink_src/sub/file.txt
+"$ZZ" create symlink_input.mzg symlink_src >/dev/null
+if ln -s ../symlink_outside symlink_extract/symlink_src 2>/dev/null; then
+  expect 1 "symlink" -- "$ZZ" extract -f -o symlink_extract symlink_input.mzg
+  [ ! -e symlink_outside/sub/file.txt ] || fail "extraction wrote through a destination symlink"
+fi
 
 # ---------- file larger than the block size, many threads ----------
 head -c 5000000 /dev/urandom > big.bin
