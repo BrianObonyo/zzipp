@@ -1,0 +1,9 @@
+build/
+build-*/
+cmake-build-*/
+*.mzg
+*.partial
+.vscode/
+.idea/
+.cache/
+compile_commands.json
