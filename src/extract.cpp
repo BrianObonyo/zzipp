@@ -60,7 +60,18 @@ bool write_file(const fs::path& dest, const uint8_t* data, size_t n, const Entry
             errs.add("refusing to overwrite symlink/directory: " + e.path);
             return false;
         }
+#ifdef _WIN32
+        fs::permissions(dest, fs::perms::owner_write, fs::perm_options::add, ec);
+        if (ec) {
+            errs.add("cannot make existing file writable " + dest.string() + " (" + ec.message() + ")");
+            return false;
+        }
+#endif
         fs::remove(dest, ec);  // a read-only file cannot be truncated in place
+        if (ec) {
+            errs.add("cannot remove existing file " + dest.string() + " (" + ec.message() + ")");
+            return false;
+        }
     }
     std::ofstream out(dest, std::ios::binary | std::ios::trunc);
     if (!out) {

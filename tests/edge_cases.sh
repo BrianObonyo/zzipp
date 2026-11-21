@@ -41,18 +41,21 @@ expect 1 "" -- "$ZZ" list adir
 echo hi > f.txt
 expect 1 "cannot create output" -- "$ZZ" create /no/such/dir/a.mzg f.txt
 expect 1 "duplicate path" -- "$ZZ" create dup.mzg f.txt f.txt
-ln -s f.txt empty-link
-expect 1 "nothing to archive" -- "$ZZ" create none.mzg empty-link
+if ln -s f.txt empty-link 2>/dev/null && [ -L empty-link ]; then
+  expect 1 "nothing to archive" -- "$ZZ" create none.mzg empty-link
+else
+  echo "note: symlink creation unavailable; skipping symlink input check"
+fi
 
 case "$(uname -s)" in
   MINGW*|MSYS*)
-    root="$(cygpath -w "$(cygpath -u "$PWD" | cut -c1-3)")"
+    root="${SYSTEMDRIVE:-C:}/"
+    MSYS_NO_PATHCONV=1 expect 1 "unsupported path" -- "$ZZ" create root.mzg "$root"
     ;;
   *)
-    root=/
+    expect 1 "unsupported path" -- "$ZZ" create root.mzg /
     ;;
 esac
-expect 1 "unsupported path" -- "$ZZ" create root.mzg "$root"
 
 # ---------- archives with no data blocks ----------
 mkdir -p onlydirs/a/b onlyempty
@@ -74,9 +77,15 @@ printf 'x' > "odd/new
 line.txt"
 printf 'x' > "odd/$(printf 'a%.0s' $(seq 1 200)).txt"
 printf 'x' > "odd/ünï çödé 日本語.txt"
-ln -s f.txt odd/link
+if ln -s f.txt odd/link 2>/dev/null && [ -L odd/link ]; then
+  has_symlink=1
+else
+  has_symlink=0
+fi
 out=$("$ZZ" create odd.mzg ./odd/ 2>&1); [ $? -eq 0 ] || fail "odd names: $out"
-grep -qi "symlink" <<<"$out" || fail "symlink skip was not reported: $out"
+if [ "$has_symlink" -eq 1 ]; then
+  grep -qi "symlink" <<<"$out" || fail "symlink skip was not reported: $out"
+fi
 expect 0 "" -- "$ZZ" extract -o odd_out odd.mzg
 diff <(cd odd && find . -type f | LC_ALL=C sort) <(cd odd_out/odd && find . -type f | LC_ALL=C sort) >/dev/null || fail "odd file names did not round-trip"
 mkdir -p rel/sub && echo r > rel/sub/r.txt
@@ -116,7 +125,10 @@ if stat -c %Y f.txt >/dev/null 2>&1; then
   touch -d '2020-02-03 04:05:06' f.txt; chmod 640 f.txt
   "$ZZ" create meta.mzg f.txt >/dev/null; "$ZZ" extract -o meta_out meta.mzg >/dev/null
   [ "$(stat -c %Y f.txt)" = "$(stat -c %Y meta_out/f.txt)" ] || fail "mtime not preserved"
-  [ "$(stat -c %a meta_out/f.txt)" = "640" ] || fail "permissions not preserved"
+  case "$(uname -s)" in
+    MINGW*|MSYS*) ;;
+    *) [ "$(stat -c %a meta_out/f.txt)" = "640" ] || fail "permissions not preserved" ;;
+  esac
 fi
 
 # ---------- hostile archive: out-of-range mtime must not crash extraction ----------

@@ -37,6 +37,8 @@ jobs:
             mingw-w64-ucrt-x86_64-xz
             mingw-w64-ucrt-x86_64-zlib
             mingw-w64-ucrt-x86_64-python
+            coreutils
+            diffutils
             unzip
       - name: Configure (Ubuntu)
         if: runner.os == 'Linux'
