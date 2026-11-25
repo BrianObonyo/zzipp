@@ -120,6 +120,8 @@ QProgressBar { background: @border@; border: none; border-radius: 5px; }
 QProgressBar::chunk { background: @accent@; border-radius: 5px; }
 QPlainTextEdit { background: @side@; border: 1px solid @border@; border-radius: 8px; font-family: monospace; color: @text@; }
 QCheckBox { color: @text@; spacing: 8px; }
+QScrollArea { background: transparent; border: none; }
+QScrollArea > QWidget > QWidget { background: transparent; }
 QScrollBar:vertical { background: transparent; width: 12px; margin: 2px; }
 QScrollBar::handle:vertical { background: @border@; border-radius: 4px; min-height: 28px; }
 QScrollBar::handle:vertical:hover { background: @muted@; }

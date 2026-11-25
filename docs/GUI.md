@@ -53,11 +53,22 @@ cmake --build build -j
 
 Disable it with `-DZZIPP_BUILD_GUI=OFF`.
 
-### Windows (not yet verified)
+### Windows (MSYS2 UCRT64, verified)
 
-I developed and tested the GUI on Linux only. The code avoids platform-specific APIs apart from the RAM
-query (`GlobalMemoryStatusEx` on Windows), and the engine now converts paths as UTF-8, but nothing below has
-been run on a Windows machine yet. A reasonable route:
+1. Install [MSYS2](https://www.msys2.org/) and open the **MSYS2 UCRT64** shell.
+2. Install dependencies:
+   ```sh
+   pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake \
+     mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-xz mingw-w64-ucrt-x86_64-zlib \
+     mingw-w64-ucrt-x86_64-qt6-base
+   ```
+3. Configure and build from the repository root:
+   ```sh
+   cmake -S . -B build-msys2 -G Ninja -DZZIPP_BUILD_GUI=ON -DZZIPP_BUILD_TESTS=OFF
+   cmake --build build-msys2 --parallel
+   ```
+
+### Windows (MSVC + vcpkg, not yet verified)
 
 1. Install Visual Studio 2022 (C++ workload), CMake, Qt 6 (MSVC 2022 64-bit kit) and [vcpkg](https://vcpkg.io).
 2. `vcpkg install liblzma zlib --triplet x64-windows`
@@ -71,6 +82,25 @@ been run on a Windows machine yet. A reasonable route:
 
 Qt is licensed under the LGPLv3/GPL. Zzipp is Apache-2.0; if you distribute binaries, link Qt dynamically
 (what `windeployqt` does) and ship Qt's license notices.
+
+## Starting the GUI
+
+After building, run the GUI executable from the build tree. Make sure the Qt/runtime DLLs are discoverable.
+
+- **Linux:** `./build/src/gui/zzipp-gui` (or pass an archive to open: `zzipp-gui archive.mzg`).
+- **Windows, MSYS2 UCRT64 shell:**
+  ```sh
+  export PATH=/ucrt64/bin:$PATH
+  ./build-msys2/src/gui/zzipp-gui.exe
+  ```
+- **Windows, PowerShell:**
+  ```powershell
+  $env:PATH = 'C:\msys64\ucrt64\bin;' + $env:PATH
+  .\build-msys2\src\gui\zzipp-gui.exe
+  ```
+  You can also pass an archive path: `.\build-msys2\src\gui\zzipp-gui.exe .\backup.mzg`.
+
+**What to expect:** the main window opens with a sidebar (Create archive, Open & extract, Settings) and a task panel at the bottom. Create lets you add files/folders, choose presets/options, and write a `.mzg`. Open & extract lets you browse archive contents, filter, extract selected/all, test integrity, and export ZIP. Progress/logs appear in the task panel; Cancel stops after the current block. If the window is small, page content scrolls so controls remain accessible.
 
 ## Testing
 

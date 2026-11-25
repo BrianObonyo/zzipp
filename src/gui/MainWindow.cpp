@@ -27,6 +27,7 @@
 #include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSettings>
 #include <QSpinBox>
 #include <QStackedWidget>
@@ -178,7 +179,14 @@ MainWindow::MainWindow() {
     stack_->addWidget(buildCreatePage());
     stack_->addWidget(buildBrowsePage());
     stack_->addWidget(buildSettingsPage());
-    rv->addWidget(stack_, 1);
+    auto* scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->viewport()->setAutoFillBackground(false);
+    stack_->setAutoFillBackground(false);
+    scroll->setWidget(stack_);
+    rv->addWidget(scroll, 1);
     rv->addWidget(buildTaskPanel());
     h->addWidget(right, 1);
 
@@ -355,6 +363,7 @@ QWidget* MainWindow::buildBrowsePage() {
     auto* titles = new QVBoxLayout;
     titles->addWidget(label(tr("Open & extract"), "h1"));
     archiveLabel_ = label(tr("No archive open. Open a .mzg file or drop one onto this window."), "sub");
+    archiveLabel_->setWordWrap(true);
     titles->addWidget(archiveLabel_);
     top->addLayout(titles, 1);
     auto* openBtn = new QPushButton(tr("Open archive…"));
@@ -399,6 +408,7 @@ QWidget* MainWindow::buildBrowsePage() {
     tree_->setUniformRowHeights(true);
     tree_->setRootIsDecorated(true);
     tree_->setSortingEnabled(true);
+    tree_->setMinimumHeight(220);
     tree_->header()->setStretchLastSection(false);
     tree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     tree_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
@@ -513,6 +523,7 @@ QWidget* MainWindow::buildTaskPanel() {
     v->setSpacing(8);
     auto* r = new QHBoxLayout;
     statusLabel_ = label(tr("Ready"), "status");
+    statusLabel_->setWordWrap(true);
     r->addWidget(statusLabel_, 1);
     elapsedLabel_ = label("", "muted");
     r->addWidget(elapsedLabel_);
