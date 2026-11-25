@@ -72,6 +72,7 @@ struct ZipOptions {
 int cmd_create(const CreateOptions& opts);
 int cmd_extract(const ExtractOptions& opts);
 int cmd_list(const std::string& archive, bool long_format);
+int cmd_info(const std::string& archive);
 int cmd_test(const std::string& archive, unsigned threads, const Callbacks& cb = Callbacks());
 int cmd_export_zip(const ZipOptions& opts);
 

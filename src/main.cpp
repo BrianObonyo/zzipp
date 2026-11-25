@@ -30,6 +30,7 @@ void print_usage(FILE* f) {
         "  zzipp create  [options] <archive.mzg> <file|dir>...\n"
         "  zzipp extract [-o DIR] [-f] [-j N] <archive.mzg> [path...]\n"
         "  zzipp list    [-l] <archive.mzg>\n"
+        "  zzipp info    <archive.mzg>\n"
         "  zzipp test    [-j N] <archive.mzg>\n"
         "  zzipp export-zip [-f] [--level N] <archive.mzg> <out.zip>\n"
         "\n"
@@ -131,6 +132,14 @@ int run(const std::vector<std::string>& a) {
         }
         if (pos.size() != 1) throw UsageError("list needs exactly one archive");
         return cmd_list(pos[0], long_format);
+    }
+    if (cmd == "info" || cmd == "i") {
+        for (size_t i = 1; i < a.size(); ++i) {
+            if (a[i].size() > 1 && a[i][0] == '-') throw UsageError("unknown option: " + a[i]);
+            else pos.push_back(a[i]);
+        }
+        if (pos.size() != 1) throw UsageError("info needs exactly one archive");
+        return cmd_info(pos[0]);
     }
     if (cmd == "test" || cmd == "t") {
         unsigned threads = default_threads();

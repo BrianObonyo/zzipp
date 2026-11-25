@@ -137,6 +137,40 @@ int cmd_list(const std::string& archive, bool long_format) {
     return 0;
 }
 
+int cmd_info(const std::string& archive) {
+    ArchiveReader ar(archive);
+    const Index& idx = ar.index();
+    uint64_t files = 0, dirs = 0, original = 0;
+    uint64_t stored = 0, lzma2 = 0, lzma2bcj = 0;
+    for (const Entry& e : idx.entries) {
+        if (e.kind == EntryKind::Dir) ++dirs;
+        else ++files;
+        original += e.size;
+    }
+    for (const BlockInfo& b : idx.blocks) {
+        switch (b.method) {
+            case Method::Store: ++stored; break;
+            case Method::Lzma2: ++lzma2; break;
+            case Method::Lzma2Bcj86: ++lzma2bcj; break;
+        }
+    }
+    const uint64_t archived = ar.file_size();
+    std::printf("Archive:     %s\n", archive.c_str());
+    std::printf("Format:      MZG1 (version %u)\n", FORMAT_VERSION);
+    std::printf("Blocks:      %s\n", group_digits(idx.blocks.size()).c_str());
+    std::printf("Entries:     %s files, %s dirs\n", group_digits(files).c_str(), group_digits(dirs).c_str());
+    std::printf("Original:    %s\n", human_size(original).c_str());
+    std::printf("Archive:     %s\n", human_size(archived).c_str());
+    if (original) {
+        const double ratio = 100.0 * static_cast<double>(archived) / static_cast<double>(original);
+        const double saved = 100.0 - ratio;
+        std::printf("Ratio:       %.1f%% of original (saved %.1f%%)\n", ratio, saved);
+    }
+    std::printf("Methods:     %s store, %s lzma2, %s lzma2+bcj86\n",
+                group_digits(stored).c_str(), group_digits(lzma2).c_str(), group_digits(lzma2bcj).c_str());
+    return 0;
+}
+
 int cmd_test(const std::string& archive, unsigned threads, const Callbacks& cb) {
     ArchiveReader ar(archive);
     const Index& idx = ar.index();

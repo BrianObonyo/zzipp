@@ -49,6 +49,7 @@ The CLI executable is `build/zzipp` on Unix-like systems. On multi-configuration
 zzipp create [options] <archive.mzg> <file|dir>...
 zzipp extract [-o DIR] [-f] [-j N] <archive.mzg> [path...]
 zzipp list [-l] <archive.mzg>
+zzipp info <archive.mzg>
 zzipp test [-j N] <archive.mzg>
 zzipp export-zip [-f] [--level N] <archive.mzg> <out.zip>
 ```
@@ -59,7 +60,8 @@ Examples:
 # Create an archive from a folder
 zzipp create backup.mzg my-folder
 
-# List its contents and verify the archive
+# Inspect, list, and verify the archive
+zzipp info backup.mzg
 zzipp list -l backup.mzg
 zzipp test backup.mzg
 
